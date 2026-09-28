@@ -291,6 +291,12 @@
   .hb.off{ background:var(--green-soft); color:var(--green); }
   .hb.work{ background:var(--amber-soft); color:var(--amber); }
   .cell-head .di{ font-size:10px; color:var(--accent); flex:none; font-weight:600; }
+  /* 日历格内直接展示的当日事项（含勾选框） */
+  .cal-di{ display:flex; flex-direction:column; gap:2px; }
+  .cal-di .di-item{ display:flex; align-items:center; gap:4px; min-width:0; font-size:11px; color:var(--ink-2); cursor:pointer; }
+  .cal-di .di-item input[type=checkbox]{ width:13px; height:13px; margin:0; accent-color:var(--accent); flex:none; cursor:pointer; }
+  .cal-di .di-item .t{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cal-di .di-item.done .t{ color:var(--ink-3); text-decoration:line-through; }
   .cal-cell.dim{ background:var(--surface-2); }
   .cal-cell.dim .dnum,.cal-cell.dim .lunar{ opacity:.38; }
   .cal-cell.rest:not(.dim) .dnum{ color:var(--ink-3); }
@@ -1222,14 +1228,20 @@
         var ds=dstrOf(d);
         var dt=dayType(ds,d.getDay());
         var lu=dayLunarText(d.getFullYear(),d.getMonth()+1,d.getDate());
-        var diCount=0;
-        dayItems.forEach(function(x){ if(x.date===ds) diCount++; });
+        var cellItems=dayItems.filter(function(x){ return x.date===ds; });
+        var diHtml='';
+        if(cellItems.length){
+          // 当日事项直接列在日历格内（含勾选框），整体下移避开上方的任务色条
+          diHtml='<div class="cal-di" style="margin-top:'+(lanes.length*LANE_H+14)+'px">'+
+            cellItems.map(function(x){
+              return '<label class="di-item'+(x.done?' done':'')+'" title="'+esc(x.text)+'"><input type="checkbox" data-dichk="'+x.id+'"'+(x.done?' checked':'')+'><span class="t">'+esc(x.text)+'</span></label>';
+            }).join('')+'</div>';
+        }
         return '<div class="cal-cell'+(d.getMonth()!==calM?' dim':'')+(ds===today?' today':'')+((dt==='off'||dt==='weekend')?' rest':'')+'" data-day="'+ds+'">'+
           '<div class="cell-head"><span class="dnum">'+d.getDate()+'</span>'+
           '<span class="lunar'+(lu.fest?' fest':'')+'">'+esc(lu.text)+'</span>'+
-          (diCount?'<span class="di" title="当日事项">●'+diCount+'</span>':'')+
           (dt==='off'?'<span class="hb off">休</span>':(dt==='work'?'<span class="hb work">班</span>':''))+
-          '</div></div>';
+          '</div>'+diHtml+'</div>';
       }).join('');
       return '<div class="cal-week" style="min-height:'+minH+'px">'+cellsHtml+'<div class="cal-bars">'+barsHtml+'</div></div>';
     }).join('');
@@ -1243,8 +1255,16 @@
     } else { ub.hidden=true; }
     document.getElementById('calGrid').querySelectorAll('[data-day]').forEach(function(c){
       c.onclick=function(e){
-        if(e.target.closest('.cal-bar')) return;
+        // 点任务色条或当日事项区域时不弹窗（色条看详情、勾选框只改状态）
+        if(e.target.closest('.cal-bar') || e.target.closest('.cal-di')) return;
         openDayModal(c.getAttribute('data-day'));
+      };
+    });
+    // 日历格内当日事项勾选：完成置灰 + 删除线，取消勾选恢复
+    document.getElementById('calGrid').querySelectorAll('[data-dichk]').forEach(function(c){
+      c.onchange=function(){
+        var it=dayItems.find(function(x){ return x.id===c.getAttribute('data-dichk'); });
+        if(it){ it.done=c.checked; saveDayItems(); renderCalendar(); }
       };
     });
     document.getElementById('calView').querySelectorAll('[data-caltask]').forEach(function(b){
@@ -1333,7 +1353,7 @@
       '<div class="dm-list">'+items.map(function(x){
         return '<div class="dm-item'+(x.done?' done':'')+'"><input type="checkbox" data-dichk="'+x.id+'"'+(x.done?' checked':'')+'><span class="t">'+esc(x.text)+'</span><button type="button" class="del" data-didel="'+x.id+'" title="删除">×</button></div>';
       }).join('')+'</div>'+
-      '<div class="dm-add"><input type="text" id="dmAddInput" placeholder="给这一天加条事项，回车保存…" autocomplete="off"><button type="button" id="dmAddBtn">添加</button></div>'+
+      '<div class="dm-add"><input type="text" id="dmAddInput" placeholder="给这一天加条事项…" autocomplete="off"><button type="button" id="dmAddBtn">添加</button></div>'+
       '<div class="mrow"><button class="btn ghost" data-close type="button">关闭</button></div>');
     var modal=document.getElementById('modal');
     modal.classList.add('daymodal');
@@ -1360,7 +1380,6 @@
       saveDayItems(); refreshDay(ds);
     };
     document.getElementById('dmAddBtn').onclick=addFn;
-    document.getElementById('dmAddInput').addEventListener('keydown',function(e){ if(e.key==='Enter'){ e.preventDefault(); addFn(); } });
   }
   // 修改当日事项后刷新日历并重新打开当天弹窗
   function refreshDay(ds){
