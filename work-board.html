@@ -318,6 +318,12 @@
   .cal-bar.g7{ background:var(--g7); color:var(--g7-ink); }
   .cal-bar.cont-l{ border-top-left-radius:0; border-bottom-left-radius:0; }
   .cal-bar.cont-r{ border-top-right-radius:0; border-bottom-right-radius:0; }
+  /* 含子任务的色条：加高，上面标题行、下面按日期排布子任务（高度由 JS 按子泳道行数动态设置） */
+  .cal-bar.has-steps{ line-height:1; padding:0; }
+  .cal-bar.has-steps .cal-bar-title{ display:block; height:19px; line-height:19px; padding:0 6px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+  .cal-bar.has-steps .cal-bar-steps{ position:absolute; left:0; right:0; top:19px; bottom:0; }
+  .cal-bar .step-seg{ position:absolute; height:14px; border:1px solid currentColor; border-radius:4px; padding:0 3px; font-size:10px; line-height:12px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; opacity:.72; }
+  .cal-bar .step-seg.done{ opacity:.38; text-decoration:line-through; }
   .cal-more{ position:absolute; font-size:10.5px; color:var(--ink-3); padding-left:8px; pointer-events:none; }
   .cal-undated{ margin-top:14px; background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
   .cal-undated h3{ font-size:12.5px; color:var(--ink-2); margin:0 0 8px; font-weight:600; }
@@ -1168,7 +1174,7 @@
   document.getElementById('viewCalBtn').onclick=function(){ setView('cal'); };
 
   // ---- 日历渲染（甘特条式月视图） ----
-  var HEAD_H=34, LANE_H=22;   // 表头高度、每条色条占用的纵向高度
+  var HEAD_H=34, BAR_H=19, GAP=3, STEP_ROW=16;   // 表头高度、普通色条高、泳道间隙、子任务每行高
   function dstrOf(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
   function dayDiff(a,b){ return Math.round((new Date(b+'T00:00:00')-new Date(a+'T00:00:00'))/86400000); }
   function createdDateStr(t){ return dstrOf(new Date(t.created||Date.now())); }
@@ -1186,6 +1192,27 @@
     if(t.status==='done') return 'c-done';
     return 'g'+(hashStr(t.id)%8);
   }
+  // 子任务在父条内的子泳道分配：日期重叠的子任务上下错开；返回 {assign,count}
+  function stepAssign(t){
+    var steps=t.steps||[];
+    var r=taskRange(t);
+    var items=steps.map(function(s,idx){
+      var a=s.start||r.s, b=s.deadline||r.e;
+      if(a>b){ var tmp=a; a=b; b=tmp; }
+      return {idx:idx, a:a, b:b};
+    });
+    items.sort(function(x,y){ return x.a<y.a?-1:(x.a>y.a?1:(x.b<y.b?-1:(x.b>y.b?1:0))); });
+    var lanes=[], assign=steps.map(function(){ return 0; });
+    items.forEach(function(it){
+      var li=-1;
+      for(var i=0;i<lanes.length;i++){ if(lanes[i]<it.a){ li=i; break; } }
+      if(li<0){ li=lanes.length; lanes.push(it.b); } else { lanes[li]=it.b; }
+      assign[it.idx]=li;
+    });
+    return {assign:assign, count:Math.max(1,lanes.length)};
+  }
+  // 任务色条高度：普通任务一行；有子任务时按子泳道行数加高
+  function barH(t){ return (t.steps && t.steps.length)?(BAR_H+stepAssign(t).count*STEP_ROW):BAR_H; }
   function renderCalendar(){
     document.getElementById('calTitle').textContent=calY+'年'+(calM+1)+'月';
     var lead=(new Date(calY,calM,1).getDay()+6)%7;
@@ -1211,19 +1238,52 @@
       // 按「开始早的在前、跨度长的在前」排序，再贪心分配横向泳道（lanes），
       // 让同一周内时间重叠的任务上下错开、不互相覆盖
       segs.sort(function(a,b){ return a.colStart-b.colStart||((b.colEnd-b.colStart)-(a.colEnd-a.colStart))||(a.t.created-b.t.created); });
-      var lanes=[], barsHtml='';
+      // 两遍处理：先按「开始早的在前、跨度长的在前」贪心分配泳道，并记录每条泳道里最高的色条高度；
+      // 再由各泳道高度累加出每条泳道的纵向起点，保证高低不一的色条上下错开、不互相覆盖
+      var lanes=[], laneH=[];
       segs.forEach(function(sg){
         var li=-1;
         for(var i=0;i<lanes.length;i++){ if(lanes[i]<sg.colStart){ li=i; break; } }
-        if(li<0){ li=lanes.length; lanes.push(-1); }
+        if(li<0){ li=lanes.length; lanes.push(-1); laneH.push(0); }
         lanes[li]=sg.colEnd;
-        var r=taskRange(sg.t);
-        barsHtml+='<div class="cal-bar '+barColorClass(sg.t)+(sg.contL?' cont-l':'')+(sg.contR?' cont-r':'')+'" data-caltask="'+sg.t.id+'"'+
-          ' title="'+esc(sg.t.title)+'（'+fmtDate(r.s)+' ~ '+fmtDate(sg.t.deadline)+'）"'+
-          ' style="top:'+(li*LANE_H)+'px;left:calc('+(sg.colStart/7*100)+'% + 1px);width:calc('+((sg.colEnd-sg.colStart+1)/7*100)+'% - 2px)">'+esc(sg.t.title)+'</div>';
+        var h=barH(sg.t);
+        if(h>laneH[li]) laneH[li]=h;
+        sg.lane=li;
       });
-      // 本周行高度 = 表头 + 泳道数 × 行高；任务再多也全部画出、不隐藏
-      var minH=HEAD_H+Math.max(1,lanes.length)*LANE_H+4;
+      var laneTop=[];
+      for(var li=0;li<lanes.length;li++){ laneTop[li]=li?(laneTop[li-1]+laneH[li-1]+GAP):0; }
+      var barsBottom=lanes.length?(laneTop[lanes.length-1]+laneH[lanes.length-1]):0;
+      var barsHtml=segs.map(function(sg){
+        var r=taskRange(sg.t);
+        var tall=(sg.t.steps && sg.t.steps.length);
+        var sa=tall?stepAssign(sg.t):null;
+        var h=tall?(BAR_H+sa.count*STEP_ROW):BAR_H;
+        var inner='';
+        if(tall){
+          // 父条加高：上面一行标题，下面按子泳道行数、各自日期排布子任务（日期重叠的子任务上下错开）
+          var cs=r.s<ws?ws:r.s, ce=r.e>we?we:r.e;
+          var span=dayDiff(cs,ce)+1;
+          var stepsHtml='';
+          sg.t.steps.forEach(function(s,idx){
+            var ss=s.start||r.s, se=s.deadline||r.e;
+            if(ss>se){ var t2=ss; ss=se; se=t2; }
+            var vss=ss<cs?cs:ss, vse=se>ce?ce:se;
+            if(vse<vss) return;   // 该子任务本周不可见
+            var left=dayDiff(cs,vss)/span*100, w=(dayDiff(vss,vse)+1)/span*100;
+            var top=sa.assign[idx]*STEP_ROW+1;
+            var rangeTxt=(s.start?fmtDate(s.start)+' ~ ':'')+(s.deadline?fmtDate(s.deadline):'');
+            stepsHtml+='<span class="step-seg'+(s.done?' done':'')+'" style="left:'+left+'%;width:'+w+'%;top:'+top+'px" title="'+esc(s.text)+(rangeTxt?' · '+rangeTxt:'')+'">'+esc(s.text)+'</span>';
+          });
+          inner='<span class="cal-bar-title">'+esc(sg.t.title)+'</span><span class="cal-bar-steps">'+stepsHtml+'</span>';
+        } else {
+          inner=esc(sg.t.title);
+        }
+        return '<div class="cal-bar '+barColorClass(sg.t)+(tall?' has-steps':'')+(sg.contL?' cont-l':'')+(sg.contR?' cont-r':'')+'" data-caltask="'+sg.t.id+'"'+
+          ' title="'+esc(sg.t.title)+'（'+fmtDate(r.s)+' ~ '+fmtDate(sg.t.deadline)+'）"'+
+          ' style="top:'+laneTop[sg.lane]+'px;left:calc('+(sg.colStart/7*100)+'% + 1px);width:calc('+((sg.colEnd-sg.colStart+1)/7*100)+'% - 2px)'+(tall?';height:'+h+'px':'')+'">'+inner+'</div>';
+      }).join('');
+      // 本周行高度 = 表头 + 所有泳道累加高度；任务再多也全部画出、不隐藏
+      var minH=HEAD_H+barsBottom+4;
       var cellsHtml=week.map(function(d){
         var ds=dstrOf(d);
         var dt=dayType(ds,d.getDay());
@@ -1232,7 +1292,7 @@
         var diHtml='';
         if(cellItems.length){
           // 当日事项直接列在日历格内（含勾选框），整体下移避开上方的任务色条
-          diHtml='<div class="cal-di" style="margin-top:'+(lanes.length*LANE_H+14)+'px">'+
+          diHtml='<div class="cal-di" style="margin-top:'+(barsBottom+14)+'px">'+
             cellItems.map(function(x){
               return '<label class="di-item'+(x.done?' done':'')+'" title="'+esc(x.text)+'"><input type="checkbox" data-dichk="'+x.id+'"'+(x.done?' checked':'')+'><span class="t">'+esc(x.text)+'</span></label>';
             }).join('')+'</div>';
