@@ -641,6 +641,13 @@
       var done=t.steps.filter(function(s){return s.done;}).length;
       lines.push([t.title,t.priority,urgencyNames[t.urgency]||'',taskEffort(t),t.start||'',t.deadline,statusNames[t.status],t.assistance,t.steps.length?(done+'/'+t.steps.length):'',t.notes].map(csvCell).join(','));
     });
+    // 追加单日事项：先空一行，再写表头与各条
+    if(dayItems.length){
+      lines.push('','日期,事项,已完成');
+      dayItems.slice().sort(function(a,b){ return (a.date||'')<(b.date||'')?-1:(a.date||'')>(b.date||'')?1:0; }).forEach(function(d){
+        lines.push([d.date||'',d.text||'',d.done?'是':'否'].map(csvCell).join(','));
+      });
+    }
     var csv='﻿'+lines.join('\r\n');
     var blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});
     var url=URL.createObjectURL(blob);
@@ -1013,8 +1020,8 @@
   }
   function closeModal(){ document.getElementById('overlay').classList.remove('show'); }
   document.getElementById('exportBtn').onclick=function(){
-    var json=JSON.stringify(tasks,null,2);
-    openModal('<h3>导出数据</h3><p>复制下面的 JSON 保存到别处，作为备份。</p>'+
+    var json=JSON.stringify({tasks:tasks,dayItems:dayItems},null,2);
+    openModal('<h3>导出数据</h3><p>复制下面的 JSON 保存到别处，作为备份（含任务与单日事项）。</p>'+
       '<textarea readonly id="exportText">'+esc(json)+'</textarea>'+
       '<div class="mrow"><button class="btn" id="copyBtn" type="button">复制</button><button class="btn ghost" data-close type="button">关闭</button></div>');
     document.getElementById('copyBtn').onclick=function(){
@@ -1033,10 +1040,18 @@
     document.getElementById('doImport').onclick=function(){
       try{
         var a=JSON.parse(document.getElementById('importText').value);
-        if(!Array.isArray(a)) throw 0;
-        tasks=a.map(norm);
-        save(); render(); closeModal();
-      }catch(e){ alert('格式不对，请粘贴完整的 JSON 数组。'); }
+        // 兼容旧格式（纯任务数组）；新格式为 {tasks:[],dayItems:[]}
+        var newTasks=null, newDay=null;
+        if(Array.isArray(a)){ newTasks=a; }
+        else if(a && typeof a==='object'){
+          if(Array.isArray(a.tasks)) newTasks=a.tasks;
+          if(Array.isArray(a.dayItems)) newDay=a.dayItems;
+        }
+        if(!newTasks && !newDay) throw 0;
+        if(newTasks){ tasks=newTasks.map(norm); save(); }
+        if(newDay){ dayItems=newDay.map(normDayItem); saveDayItems(); }
+        render(); closeModal();
+      }catch(e){ alert('格式不对，请粘贴完整的 JSON。'); }
     };
   };
   document.getElementById('overlay').addEventListener('click',function(e){
@@ -1454,9 +1469,10 @@
   }
   var savedTheme=null; try{ savedTheme=localStorage.getItem(THEME_KEY); }catch(e){}
   if(savedTheme==='dark') document.documentElement.setAttribute('data-theme','dark');
+  else if(savedTheme==='light') document.documentElement.setAttribute('data-theme','light');
   document.getElementById('themeBtn').onclick=function(){
     var dark=document.documentElement.getAttribute('data-theme')==='dark';
-    if(dark){ document.documentElement.removeAttribute('data-theme'); try{localStorage.removeItem(THEME_KEY);}catch(e){} }
+    if(dark){ document.documentElement.setAttribute('data-theme','light'); try{localStorage.setItem(THEME_KEY,'light');}catch(e){} }
     else { document.documentElement.setAttribute('data-theme','dark'); try{localStorage.setItem(THEME_KEY,'dark');}catch(e){} }
     applyTheme();
   };
