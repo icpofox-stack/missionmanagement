@@ -1357,7 +1357,9 @@
     var stepsHtml=t.steps.length
       ? '<h4>子任务（'+doneSteps+'/'+t.steps.length+'）</h4><div class="dm-list">'+
         t.steps.map(function(s){
-          return '<div class="dm-item'+(s.done?' done':'')+'"><span class="t">'+esc(s.text)+'</span>'+
+          return '<div class="dm-item'+(s.done?' done':'')+'">'+
+            '<input type="checkbox" data-dchk="'+t.id+'|'+s.id+'"'+(s.done?' checked':'')+'>'+
+            '<span class="t">'+esc(s.text)+'</span>'+
             (s.start?'<span style="font-size:11px;color:var(--ink-3)">'+fmtDate(s.start)+' 起</span>':'')+
             (s.deadline?'<span style="font-size:11px;color:var(--ink-3)">'+fmtDate(s.deadline)+' 止</span>':'')+
             '</div>';
@@ -1394,6 +1396,9 @@
       '</div>');
     document.getElementById('modal').classList.add('taskdetail');
     document.getElementById('tdStatus').onchange=function(){ setStatus(id,this.value); openTaskDetail(id); };
+    document.querySelectorAll('[data-dchk]').forEach(function(c){
+      c.onchange=function(){ var p=c.getAttribute('data-dchk').split('|'); toggleStep(p[0],p[1],c.checked); openTaskDetail(id); };
+    });
     document.getElementById('tdEdit').onclick=function(){ closeModal(); startEdit(id); };
     document.getElementById('tdDel').onclick=function(){ if(delTask(id)) closeModal(); };
   }
