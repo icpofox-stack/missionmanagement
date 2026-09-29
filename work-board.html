@@ -1192,27 +1192,29 @@
     if(t.status==='done') return 'c-done';
     return 'g'+(hashStr(t.id)%8);
   }
-  // 子任务在父条内的子泳道分配：日期重叠的子任务上下错开；返回 {assign,count}
-  function stepAssign(t){
+  // 计算任务本周可见的子任务，并做子泳道分配：日期重叠的上下错开
+  // 逐周计算，这样单周内不会为「其它周才重叠」的子任务预留空白行
+  function weekSteps(t, ws, we){
     var steps=t.steps||[];
     var r=taskRange(t);
-    var items=steps.map(function(s,idx){
+    var items=[];
+    steps.forEach(function(s,idx){
       var a=s.start||r.s, b=s.deadline||r.e;
       if(a>b){ var tmp=a; a=b; b=tmp; }
-      return {idx:idx, a:a, b:b};
+      var vss=a<ws?ws:a, vse=b>we?we:b;
+      if(vse<vss) return;   // 本周不可见
+      items.push({idx:idx, a:vss, b:vse});
     });
     items.sort(function(x,y){ return x.a<y.a?-1:(x.a>y.a?1:(x.b<y.b?-1:(x.b>y.b?1:0))); });
-    var lanes=[], assign=steps.map(function(){ return 0; });
+    var lanes=[];
     items.forEach(function(it){
       var li=-1;
       for(var i=0;i<lanes.length;i++){ if(lanes[i]<it.a){ li=i; break; } }
       if(li<0){ li=lanes.length; lanes.push(it.b); } else { lanes[li]=it.b; }
-      assign[it.idx]=li;
+      it.row=li;
     });
-    return {assign:assign, count:Math.max(1,lanes.length)};
+    return {items:items, count:lanes.length};
   }
-  // 任务色条高度：普通任务一行；有子任务时按子泳道行数加高
-  function barH(t){ return (t.steps && t.steps.length)?(BAR_H+stepAssign(t).count*STEP_ROW):BAR_H; }
   function renderCalendar(){
     document.getElementById('calTitle').textContent=calY+'年'+(calM+1)+'月';
     var lead=(new Date(calY,calM,1).getDay()+6)%7;
@@ -1246,7 +1248,8 @@
         for(var i=0;i<lanes.length;i++){ if(lanes[i]<sg.colStart){ li=i; break; } }
         if(li<0){ li=lanes.length; lanes.push(-1); laneH.push(0); }
         lanes[li]=sg.colEnd;
-        var h=barH(sg.t);
+        sg.wk=weekSteps(sg.t, ws, we);   // 本周可见子任务及子泳道
+        var h=sg.wk.count?(BAR_H+sg.wk.count*STEP_ROW):BAR_H;
         if(h>laneH[li]) laneH[li]=h;
         sg.lane=li;
       });
@@ -1255,22 +1258,19 @@
       var barsBottom=lanes.length?(laneTop[lanes.length-1]+laneH[lanes.length-1]):0;
       var barsHtml=segs.map(function(sg){
         var r=taskRange(sg.t);
-        var tall=(sg.t.steps && sg.t.steps.length);
-        var sa=tall?stepAssign(sg.t):null;
-        var h=tall?(BAR_H+sa.count*STEP_ROW):BAR_H;
+        var steps=sg.wk.items;                 // 本周可见子任务（已含裁剪后起止与子泳道）
+        var tall=steps.length>0;
+        var h=tall?(BAR_H+sg.wk.count*STEP_ROW):BAR_H;
         var inner='';
         if(tall){
-          // 父条加高：上面一行标题，下面按子泳道行数、各自日期排布子任务（日期重叠的子任务上下错开）
+          // 父条加高：上面一行标题，下面按子泳道行数、各自日期排布本周可见子任务（重叠的上下错开）
           var cs=r.s<ws?ws:r.s, ce=r.e>we?we:r.e;
           var span=dayDiff(cs,ce)+1;
           var stepsHtml='';
-          sg.t.steps.forEach(function(s,idx){
-            var ss=s.start||r.s, se=s.deadline||r.e;
-            if(ss>se){ var t2=ss; ss=se; se=t2; }
-            var vss=ss<cs?cs:ss, vse=se>ce?ce:se;
-            if(vse<vss) return;   // 该子任务本周不可见
-            var left=dayDiff(cs,vss)/span*100, w=(dayDiff(vss,vse)+1)/span*100;
-            var top=sa.assign[idx]*STEP_ROW+1;
+          steps.forEach(function(it){
+            var s=sg.t.steps[it.idx];
+            var left=dayDiff(cs,it.a)/span*100, w=(dayDiff(it.a,it.b)+1)/span*100;
+            var top=it.row*STEP_ROW+1;
             var rangeTxt=(s.start?fmtDate(s.start)+' ~ ':'')+(s.deadline?fmtDate(s.deadline):'');
             stepsHtml+='<span class="step-seg'+(s.done?' done':'')+'" style="left:'+left+'%;width:'+w+'%;top:'+top+'px" title="'+esc(s.text)+(rangeTxt?' · '+rangeTxt:'')+'">'+esc(s.text)+'</span>';
           });
